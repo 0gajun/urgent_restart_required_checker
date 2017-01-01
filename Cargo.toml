@@ -1,0 +1,6 @@
+[package]
+name = "urgent_restart_required_checker"
+version = "0.1.0"
+authors = ["oga <oga.ivc.s27@gmail.com>"]
+
+[dependencies]
