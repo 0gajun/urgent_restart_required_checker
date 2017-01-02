@@ -2,9 +2,22 @@ use std::process::{Command, Stdio};
 use std::fs::File;
 use std::io::{Read, Write, ErrorKind};
 
-struct PkgInfo {
-    name: String,
-    current_version: String,
+#[derive(Clone)]
+pub struct PkgInfo {
+    pub name: String,
+    pub current_version: String,
+}
+
+#[derive(Clone)]
+pub struct Changelog {
+    pub version: String,
+    pub content: String,
+}
+
+#[derive(Clone)]
+pub struct UpdateInfo {
+    pub pkg_info: PkgInfo,
+    pub change_logs: Vec<Changelog>,
 }
 
 pub fn is_ubuntu() -> bool {
@@ -19,44 +32,70 @@ pub fn is_ubuntu() -> bool {
 }
 
 // xargs apt changelog < /var/run/reboot-required.pkgs 2>/dev/null | grep urgency=high
-pub fn get_urgent_updates() -> Result<Vec<String>, String> {
+// TODO: Fix return type
+pub fn get_urgent_updates() -> Result<Option<Vec<UpdateInfo>>, String> {
     let reboot_required_pkgs = try!(get_reboot_required_pkgs());
 
-    let mut xargs = try!(Command::new("xargs")
-        .arg("apt")
-        .arg("changelog")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .or_else(|_| Err("Cannot execute apt command.".to_string())));
-
-    {
-        let ref mut xargs_stdin = try!(xargs.stdin
-            .as_mut()
-            .ok_or("Cannot open child stdin".to_string()));
-
-        for pkg in reboot_required_pkgs {
-            xargs_stdin.write_all((pkg.name + "\n").into_bytes().as_slice());
+    let mut update_infos = vec![];
+    for ref pkg_info in reboot_required_pkgs {
+        if let Some(update_info) = try!(get_urgent_update_info(pkg_info)) {
+            update_infos.push(update_info);
         }
     }
 
-    let output = {
-        let xargs_raw_output = try!(xargs.wait_with_output()
-                .or(Err("Cannot get output from apt command")))
-            .stdout;
+    Ok(if update_infos.is_empty() {
+        None
+    } else {
+        Some(update_infos)
+    })
+}
 
-        try!(String::from_utf8(xargs_raw_output).or(Err("Cannot convert output into utf8 format")))
+fn get_urgent_update_info(pkg_info: &PkgInfo) -> Result<Option<UpdateInfo>, String> {
+    let output = {
+        let apt_output = try!(Command::new("apt")
+            .arg("changelog")
+            .arg(&pkg_info.name)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .or_else(|_| Err("Cannot execute apt command.".to_string())));
+
+        try!(String::from_utf8(apt_output.stdout).or(Err("Cannot convert output into utf8 format")))
     };
 
-    for line in output.lines() {
-        if line.contains("urgency=") && !line.contains("urgency=low") &&
-           !line.contains("urgency=medium") {
-            println!("{}", line);
+    let mut update_info = UpdateInfo {
+        pkg_info: pkg_info.clone(),
+        change_logs: vec![],
+    };
+
+    let mut iter = output.lines();
+    iter.by_ref().skip_while(|x| x.starts_with(&pkg_info.name));
+
+    while let Some(version) = iter.next() {
+        if version.contains(&pkg_info.current_version) {
+            break;
+        }
+
+        let content = iter.by_ref()
+            .take_while(|x| x.starts_with(&pkg_info.name))
+            .map(|x| x.to_string())
+            .collect::<Vec<String>>()
+            .join("\n");
+
+        if version.contains("urgency=") && !version.contains("urgency=low") &&
+           !version.contains("urgency=medium") {
+            update_info.change_logs.push(Changelog {
+                version: version.to_string(),
+                content: content,
+            });
         }
     }
-
-    Err("Not implemented".to_string())
+    Ok(if update_info.change_logs.is_empty() {
+        None
+    } else {
+        Some(update_info)
+    })
 }
 
 fn get_reboot_required_pkgs() -> Result<Vec<PkgInfo>, String> {
