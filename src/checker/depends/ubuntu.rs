@@ -1,6 +1,7 @@
 use std::process::{Command, Stdio};
 use std::fs::File;
-use std::io::{Read, Write, ErrorKind};
+use std::io::{Read, ErrorKind};
+use chrono::*;
 
 #[derive(Clone)]
 pub struct PkgInfo {
@@ -122,6 +123,20 @@ fn get_reboot_required_pkgs() -> Result<Vec<PkgInfo>, String> {
     }
 
     Ok(pkg_infos)
+}
+
+fn get_system_up_since() -> Option<DateTime<Local>> {
+    // uptime -s
+    Command::new("uptime")
+        .arg("-s")
+        .stdout(Stdio::piped())
+        .output()
+        .ok()
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|date_str| {
+            let date_str = date_str.trim_matches('\n');
+            Local.datetime_from_str(&date_str, "%Y-%m-%d %H:%M:%S").ok()
+        })
 }
 
 fn get_pkg_version(pkg_name: &str) -> Result<String, String> {

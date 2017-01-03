@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["oga <oga.ivc.s27@gmail.com>"]
 
 [dependencies]
+chrono = "0.2"
